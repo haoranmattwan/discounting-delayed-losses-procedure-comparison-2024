@@ -1,0 +1,366 @@
+---
+title: "Delayed Monetary Losses: A Comparison of Two Procedures"
+author: "Haoran (Matt) Wan"
+date: "today"
+format: 
+  html:
+    toc: true
+    code-fold: true
+    self-contained: true
+engine: knitr
+---
+
+## Introduction
+
+This document contains the R code to replicate the analyses from the publication:
+
+> Wan, H., Green, L., & Myerson, J. (2024). Delayed monetary losses: Do different procedures and measures assess the same construct?. *Behavioural Processes*, 105101. https://doi.org/10.1016/j.beproc.2024.105101
+
+The analyses provide a comprehensive comparison of two prominent procedures for measuring the discounting of delayed losses: the Adjusting-Amount procedure and the Monetary Choice Questionnaire (referred to here as the Delayed Losses Questionnaire or DLQ). The goal is to determine whether both procedures assess the same underlying construct.
+
+The data from this study are available at <https://osf.io/emb2q/>.
+
+```{r setup}
+#| message: false
+#| warning: false
+
+# --- Load All Packages ---
+library(psych)
+library(ltm)
+library(gmodels)
+library(rprojroot)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(tidyr)
+library(bayestestR)
+library(minpack.lm)
+library(MuMIn)
+library(janitor)
+library(data.table)
+library(tidyverse)
+library(corrr)
+library(cmdstanr)
+library(posterior)
+library(bayesplot)
+library(ggpubr)
+library(apaTables)
+library(ggdist)
+library(brms)
+library(tidybayes)
+library(lavaan)
+library(betareg)
+library(multcomp)
+library(lmtest)
+library(emmeans)
+library(modelr)
+library(broom)
+library(rstatix)
+library(DHARMa)
+library(lme4)
+library(glmmTMB)
+library(doParallel)
+library(lemon)
+library(coxed)
+library(lmerTest)
+library(here)
+
+# --- Custom Functions (from function.R) ---
+
+# Custom ggplot2 theme
+mattheme <- theme(text = element_text(size = 14, family = "Arial", color = "black", face = "bold"), 
+                  axis.text.y = element_text(colour = "black", size = 10, face = "bold"), 
+                  axis.text.x = element_text(colour = "black", size = 10, face = "bold", angle = 0), 
+                  axis.title.x = element_text(margin = margin(7, 0, 0, 0), size = 14), 
+                  axis.title.y = element_text(margin = margin(0, 7, 0, 0), size = 14), 
+                  axis.line.x = element_blank(), 
+                  axis.line.y = element_blank(), 
+                  plot.title = element_text(size = 16, face = "bold", hjust = 0.5), 
+                  panel.background = element_rect(fill = "white", linetype = 1, color = "black", size = 1), 
+                  panel.grid.major = element_blank(),
+                  panel.grid.minor = element_blank(), 
+                  plot.background = element_rect(fill = "white"),
+                  plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm"),
+                  strip.background = element_blank(),
+                  strip.text = element_text(size=14),
+                  legend.position = c(0.80, 0.2),
+                  legend.key = element_blank(),
+                  legend.background = element_blank(),
+                  legend.text=element_text(size = 11, family = "Arial", color = "black", face = "bold"),
+                  legend.title.align=0.5,
+                  plot.tag.position = c(.121, .06),
+                  plot.tag = element_text(colour = "black", size = 12),
+                  axis.ticks.length=unit(-0.15, "cm"),
+                  axis.text.y.right = element_blank())
+
+# Area Under the Curve calculation
+auc <- function(x,y) {
+  yl <- length(y)
+  auc_val <- sum( (y[1:(yl-1)]+y[2:yl])*diff(x) / 2 )
+  return(auc_val)
+}
+
+# --- Data Loading and Processing (from dat.R) ---
+
+# Load raw data
+disc_raw <- read_csv("R Code/Data/DelayLoss.csv") |> select(-1)
+
+# Filter out participants who failed attention checks and define final df
+disc_df <- disc_raw |>
+  filter(check == 7) |>
+  filter(provider != "MTurk") |>
+  select(-provider) |>
+  mutate(id = rep(c(1:431), each = 39))
+
+# --- Process Adj-Amt Data ---
+adj_amt_processed <- disc_df |>
+  filter(procedure == "aa") |>
+  group_by(id, procedure, amt) |>
+  summarise(
+    atheoretical = auc(iv / 108, value),
+    theoretical = tryCatch({
+      coef(nlsLM(value ~ 1 / (1 + exp(k) * iv), 
+                 start = list(k = -4), 
+                 control = nls.lm.control(maxiter = 1024)))[['k']]
+    }, error = function(e) NA),
+    .groups = 'drop'
+  ) |>
+  # Rename for consistency with original script
+  rename(k = theoretical)
+
+# --- Process MCQ Data ---
+mcq_processed <- disc_df |>
+  filter(procedure == "mcq") |>
+  # Correct for minor inconsistencies in k-values in raw data
+  mutate(iv = case_when(iv == .00088 ~ .00089,
+                        iv == .0018 ~ .0023,
+                        iv %in% c(.0058, .0059) ~ .0055,
+                        TRUE ~ iv)) |>
+  group_by(id, amt) |>
+  summarise(
+    atheoretical = sum(value),
+    theoretical = {
+      choices <- value
+      k_values <- iv
+      # Handle edge cases where participant never switches
+      if (all(choices == 1)) {
+        log(max(k_values)) # Always immediate -> largest k
+      } else if (all(choices == 0)) {
+        log(min(k_values)) # Always delayed -> smallest k
+      } else {
+        # For switchers, find k that maximizes response consistency
+        n_consistent <- sapply(k_values, function(k_level) {
+          sum((choices == 0 & k_values <= k_level) | (choices == 1 & k_values >= k_level))
+        })
+        indifference_ks <- k_values[which(n_consistent == max(n_consistent))]
+        # Use geometric mean of indifference points
+        log(geometric.mean(indifference_ks))
+      }
+    },
+    .groups = 'drop'
+  ) |>
+  mutate(procedure = "mcq") |>
+  # Rename for consistency with original script
+  rename(k = theoretical)
+
+# --- Combine into Final Analysis Dataframe ---
+behav <- bind_rows(adj_amt_processed, mcq_processed) |>
+  arrange(id, procedure, amt)
+
+# --- Create Choice Pattern Dataframes (logic from original dat.R) ---
+chc_pat <- filter(disc_df, procedure == "aa") |>
+  filter(amt != 3) |>
+  group_by(procedure, id, amt) |>
+  summarise(cor = cor(value, log(iv)), mean = mean(value), .groups = 'drop') |>
+  mutate(cor = ifelse(is.na(cor), 0, cor),
+         grp = case_when(cor < 0 | mean == min(subset(disc_df, procedure == "aa")$value) ~ "Typical",
+                         cor > 0 ~ "Atypical",
+                         mean == max(subset(disc_df, procedure == "aa")$value) ~ "Always immediate"),
+         grp = ifelse(is.na(grp), "Typical", grp)) |>
+  group_by(procedure, id) %>%
+  mutate(grp = ifelse(n_distinct(grp) == 1, first(grp), "Undefined")) %>%
+  ungroup() |>
+  select(procedure, id, grp) |> 
+  distinct() |>
+  rbind(
+    filter(disc_df, procedure == "mcq") |>
+      filter(amt != 2) |>
+      group_by(procedure, id,amt) |>
+      summarise(cor = cor(value, log(iv)), mean = mean(value), .groups = 'drop') |>
+      mutate(cor = ifelse(is.na(cor), 0, cor),
+             grp = case_when(cor > 0 | mean == 0 ~ "Typical",
+                             cor < 0 ~ "Atypical",
+                             mean == 1 ~ "Always immediate")) |>
+      group_by(procedure, id) %>%
+      mutate(grp = ifelse(n_distinct(grp) == 1, first(grp), "Undefined")) %>%
+      ungroup() |>
+      select(procedure, id, grp) |> 
+      distinct()
+  )  |>
+  mutate(atyp = ifelse(grp == "Atypical", 1, 0),
+         typ = ifelse(grp == "Typical", 1, 0),
+         imm = ifelse(grp == "Always immediate", 1, 0),
+         undef = ifelse(grp == "Undefined", 1, 0),
+         grp = factor(grp, levels = c("Typical","Always immediate","Atypical","Undefined"))) 
+
+co <- chc_pat |>
+  select(id, procedure, grp) |>
+  pivot_wider(names_from = procedure, values_from = grp)
+
+# Group Level Data Frame
+disc_grp_df <- disc_df |>
+  group_by(procedure,amt,iv) |>
+  mutate(iv = ifelse(procedure=="mcq", log(iv),iv)) |>
+  summarise(mean_sv=mean(value), med_sv=median(value), .groups = 'drop') |>
+  arrange(procedure)
+```
+
+---
+
+## Group-Level Analyses
+
+This section visualizes the group-level discounting functions for both the Adjusting-Amount and DLQ procedures and reports the goodness-of-fit for the corresponding nonlinear models.
+
+```{r group_level}
+#| warning: false
+
+# --- Adjusting-Amount Plot ---
+p1 <- filter(disc_grp_df, procedure == "aa") |> 
+  mutate(amt = factor(amt, level = c(1,2,3), labels = c("$90", "$240","$1,500"))) |>
+  arrange(desc(amt)) |>
+  ggplot(aes(iv, mean_sv, shape = amt, fill = amt, group = amt,linetype = amt)) +
+  geom_smooth(aes(color = amt),method = "nlsLM", formula = y ~ 1 / (1 + exp(k)*x)^b, 
+              method.args = list(start = list(k = -4, b = 1)), se = FALSE, size = .8) +
+  geom_point(size = 5) +
+  scale_y_continuous(limits = c(-.003, 1.025), breaks = seq(0,1,by=0.2), expand = c(0,0)) +
+  scale_x_continuous(limits = c(0, 113), breaks= c(4, 18, 60, 108)) +
+  scale_shape_manual(name = NULL, values = c("$1,500"=24, "$240"=25, "$90"=21)) + 
+  scale_linetype_manual(name = NULL, values = c("$1,500"="twodash", "$240"="dashed", "$90"="solid")) + 
+  scale_color_manual(name = NULL, values = c("$1,500" = "#33a02c", "$240" = "#ff7f00", "$90" = "#1f78b4")) +
+  scale_fill_manual(name = NULL, values = c("$1,500" = "#33a02c", "$240" = "#ff7f00", "$90" = "#1f78b4")) +
+  labs(x = "Delay (in months)", y = "Relative Subjective Value", title = "Adj-Amt") +
+  theme_bw() + mattheme
+
+# --- DLQ (MCQ) Plot ---
+p2 <- filter(disc_df, procedure == "mcq") |>
+  mutate(amt = factor(amt, level = c(1,2,3), labels = c("$75-105", "$150-180","$225-255"))) |>
+  ggplot(aes(iv, value, shape = amt, fill = amt, linetype = amt)) +
+  geom_smooth(aes(color = amt), method = "glm", method.args = list(family = "binomial"), se = FALSE, size = .8) +
+  geom_point(dat = subset(disc_grp_df, procedure=="mcq") |> 
+               mutate(iv = exp(iv), amt = factor(amt, level = c(1,2,3), labels = c("$75-105", "$150-180","$225-255"))) |>
+               arrange(desc(amt)), 
+             aes(iv, mean_sv, shape = amt, fill = amt), size = 5) +
+  scale_x_log10(limits=c(0.000007,.02), breaks=c(0.00001,0.0001,0.001,0.01,0.1),
+                labels=c("0.00001","0.0001","0.001","0.01","0.1")) +
+  scale_y_continuous(limits=c(-.003,1.025), breaks = seq(0,1,by=0.2), expand = c(0,0)) +
+  scale_shape_manual(name = NULL, values = c("$225-255"=24, "$150-180"=25, "$75-105"=21)) + 
+  scale_linetype_manual(name = NULL, values = c("$225-255"="twodash", "$150-180"="dashed", "$75-105"="solid")) + 
+  scale_color_manual(name = NULL, values = c("$225-255"="#33a02c","$150-180"= "#ff7f00","$75-105"="#1f78b4")) +
+  scale_fill_manual(name = NULL, values = c("$225-255"="#33a02c","$150-180"= "#ff7f00","$75-105"="#1f78b4")) +
+  labs(x = expression(paste(bold("Question "), bolditalic("k"), bold(" Parameter"))),  
+       y = "Choice of Immediate Payment", title = "DLQ") + 
+  theme_bw() + mattheme
+
+# --- Print Plots ---
+print(p1)
+print(p2)
+
+cat("--- Adj-Amt: R-squared ---\n")
+r2_aa_grp <- matrix(NA, nrow = 3, ncol = 1) |> `rownames<-`(c("$90", "$240", "$1,500"))
+for (x in 1:3) {
+    r2_aa_grp[x,1] <- rsquare(
+      nlsLM(med_sv ~ 1 / (1 + exp(k) * iv)^(b),
+            data = subset(disc_grp_df, amt == x  & procedure == "aa"),
+            start = list(k = -4, b = 1), control = list(maxiter = 1000)),
+      data = subset(disc_grp_df, amt == x  & procedure == "aa")
+    )
+}
+print(r2_aa_grp, digits = 3)
+
+# --- Calculate R-squared for DLQ (MCQ) Group Fits ---
+cat("\n--- DLQ: R-squared ---\n")
+r2_mcq_grp <- matrix(NA, nrow = 3, ncol = 1) |> `rownames<-`(c("$90", "$155", "$240"))
+for (x in 1:3) {
+    r2_mcq_grp[x,1] <- rsquare(
+      nlsLM(mean_sv ~ 1 / (1 + exp(-(iv - x) * r)),
+            data = subset(disc_grp_df, amt == x & procedure == "mcq"),
+            start = list(x = -10, r = 1), control = list(maxiter = 1000)),
+      data = subset(disc_grp_df, amt == x & procedure == "mcq")
+    )
+}
+print(r2_mcq_grp, digits = 3)
+
+# --- Test for Amount Effect in Adj-Amt Procedure ---
+cat("--- Adj-Amt: Amount Effect (Large vs. Small) ---\n")
+summary(glht(betareg(atheoretical ~ -1 + as.factor(amt), data = subset(behav, procedure == "aa")),
+             linfct = matrix(c(-1,0,1,0), nc = 4), alternative = "two.sided", rhs = 0))
+
+# --- Test for Amount Effect in DLQ (MCQ) Procedure ---
+cat("\n--- DLQ: Amount Effect (Large vs. Small) ---\n")
+summary(glht(glm(cbind(atheoretical, 9-atheoretical) ~ -1 + as.factor(amt), 
+                 data = subset(behav, procedure == "mcq"), family=binomial()),
+             linfct = matrix(c(-1,0,1), nc = 3), alternative = "two.sided", rhs = 0))
+```
+
+---
+
+## Individual-Level Discounting Measures
+
+This section examines the reliability of the discounting measures (i.e., correlations between amounts *within* each procedure) and their construct validity (i.e., correlations *between* the two procedures).
+
+```{r reliability_validity}
+# --- Within-Procedure, Between-Amount Correlations ---
+cat("--- Reliability: Correlations Between Amounts ---\n")
+pivot_longer(behav, names_to = "measure", values_to = "score", cols = c(atheoretical,k)) |>
+  mutate(amt = ifelse(amt == 1, "small", ifelse(amt == 2, "medium", "large"))) |>
+  pivot_wider(names_from = amt, values_from = score) |>
+  group_by(procedure,measure) |>
+  summarise(Sml_Med = cor(small,medium), 
+            Sml_Lrg = cor(small,large),
+            Med_Lrg = cor(medium,large)) |>
+  print()
+
+# --- Within-Procedure, Between-Measure Correlations ---
+cat("\n--- Reliability: Correlations Between Measures (Atheoretical vs. Theoretical) ---\n")
+behav |>
+  group_by(procedure, amt) |>
+  summarise(correlation = cor(atheoretical, k), .groups = 'drop') |>
+  pivot_wider(names_from = "amt", values_from = "correlation") |>
+  print()
+
+# --- Between-Procedure Correlations (Construct Validity) ---
+cat("--- Construct Validity: Correlations Between Procedures ---\n")
+filter(behav, (procedure == "aa"  & amt != 3) | (procedure == "mcq"  & amt != 2)) |>
+  mutate(amt = ifelse(amt == 1, "$90", "$240")) |>
+  pivot_wider(names_from = procedure, values_from = c(atheoretical, k)) |>
+  group_by(amt) |> 
+  summarise(cor_atheoretical = cor(atheoretical_aa, atheoretical_mcq), 
+            cor_theoretical = cor(k_aa, k_mcq)) |>
+  print()
+```
+
+---
+
+## Analysis of Choice Patterns
+
+This section categorizes participants based on their response patterns (e.g., typical, always immediate, atypical) and examines the consistency of these patterns across the two procedures.
+
+```{r choice_patterns}
+# --- Summarize Choice Pattern Frequencies ---
+cat("--- Frequencies of Choice Patterns by Procedure ---\n")
+group_by(chc_pat, procedure) |>
+  summarise(n_total = n(),
+            n_atyp = sum(atyp), pr_atyp = n_atyp/n_total,
+            n_imm = sum(imm), pr_imm = n_imm/n_total,
+            n_undef = sum(undef), pr_undef = n_undef/n_total,
+            n_typ = sum(typ), pr_typ = n_typ/n_total) |>
+  print(n = 20)
+
+# --- Co-membership of Patterns Across Procedures ---
+cat("\n--- Contingency Table of Choice Patterns (Adj-Amt vs. DLQ) ---\n")
+print(table(co$aa, co$mcq))
+
+# --- Full Cross-Tabulation with Expected Frequencies ---
+cat("\n--- Cross-Tabulation with Expected Frequencies ---\n")
+CrossTable(co$aa, co$mcq, expected = TRUE, chisq = FALSE, format = "SPSS")
+```
