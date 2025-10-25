@@ -1,61 +1,69 @@
-# Delayed Monetary Losses: A Comparison of Two Procedures
+# Validating Measurement Procedures for Intertemporal Choice
 
-This repository contains the analysis scripts, figures, and presentation materials for the peer-reviewed publication:
+This repository contains the full analysis and replication code for the peer-reviewed publication:
 
-> Wan, H., Green, L., & Myerson, J. (2024). Delayed monetary losses: Do different procedures and measures assess the same construct?. *Behavioural Processes*, *105101*. https://doi.org/10.1016/j.beproc.2024.105101
-
----
-
-## Project Overview
-
-This study investigates whether two reliable methods for measuring how people discount delayed losses—the Adjusting-Amount procedure and the Delayed Losses Questionnaire (DLQ)—measure the same underlying psychological construct. While similar procedures are used to study delayed gains, less is known about their comparability when assessing attitudes toward future losses.
-
-The analysis workflow involves processing raw experimental data to derive both theoretical (hyperbolic `k` parameter) and atheoretical (Area under the Curve) measures of discounting for each participant. We then employ a range of statistical techniques, including nonlinear regression, beta regression, and correlation analyses, to assess the reliability and construct validity of the two procedures. A secondary analysis also categorizes participants based on their choice patterns to examine the consistency of response styles across methods.
-
-The data from this study are available at <https://osf.io/emb2q/>.
-
-## Repository Structure
-
-The project materials are organized into the following folders:
-
-* **/Analysis**: Contains the primary analysis scripts that replicate the findings in the paper.
-    * `analysis.qmd`: A Quarto document with the complete **R** code for the entire workflow, from data processing to final statistical tests and visualization.
-    * `analysis.ipynb`: A Jupyter Notebook providing a direct **Python** translation of the R analysis, using `pandas` for data manipulation and `lmfit` and `statsmodels` for modeling.
-
-* **/Presentation**: Contains a slide deck or poster used to present the findings of this research at an academic conference.
-
-* **/Figure**: Contains the figures as they appear in the final publication.
+> Wan, H., Green, L., & Myerson, J. (2024). Delayed monetary losses: Do different procedures and measures assess the same construct?. *Behavioural Processes, 222*, 105101. https://doi.orgorg/10.1016/j.beproc.2024.105101
 
 ---
 
-## Methodology Snapshot
+## Project Objective
 
-This project demonstrates proficiency in a comprehensive data analysis pipeline, including:
+This project provides a methodological validation of two procedures used to measure human decision-making: the **Adjusting-Amount (Adj-Amt) task** and the **Delayed Losses Questionnaire (DLQ)**. The central research question is whether these two instruments assess the same underlying construct.
 
-* **Complex Data Processing**: Custom functions in R and Python to calculate individual-participant discounting parameters from raw choice data, including Area under the Curve (atheoretical) and nonlinear least-squares estimation of the `k` parameter (theoretical).
-* **Nonlinear Modeling**: Fitting hyperboloid and logistic functions to group-level data to visualize discounting curves and assess model fit (`R²`).
-* **Specialized Regression**: Using beta regression to model the proportional Area under the Curve data and binomial GLMs for choice data from the DLQ, correctly accounting for the distributional properties of the dependent variables.
-* **Reliability and Validity Analysis**: A full suite of correlation analyses to test within-procedure reliability (across different monetary amounts) and between-procedure construct validity.
-* **Exploratory Pattern Analysis**: Classifying participants based on the consistency of their choices and using contingency table analysis to assess whether individuals exhibit similar response patterns across different measurement procedures.
+The analysis evaluates the **convergent validity**, **concurrent validity**, and **internal reliability** of both procedures. This work is critical for researchers aiming to select appropriate measurement tools that balance efficiency and psychometric robustness, a common challenge in large-scale quantitative studies.
+
+The data are publicly available on the Open Science Framework at <https://osf.io/emb2q/>.
 
 ---
 
-## Software and Execution
+## Methodological Core
 
-To run the analyses, you will need the appropriate software environment and the raw data file.
+This project demonstrates expertise in the following quantitative methods:
 
-### R Environment (`/Analysis/analysis.qmd`)
+* **Individual-Level Parameter Estimation**: Custom functions were developed to process raw trial data from each participant and derive key discounting metrics. This includes an atheoretical measure (Area under the Curve) and a theoretical parameter (the hyperbolic discounting rate, *k*), estimated via non-linear least squares.
+* **Psychometric Evaluation**: A comprehensive suite of correlational analyses was conducted to formally assess the measurement properties of the instruments, including:
+    * **Alternate-Forms Reliability**: Correlations between different monetary amounts *within* each procedure.
+    * **Concurrent Validity**: Correlations between the atheoretical and theoretical measures *within* each procedure.
+    * **Convergent Validity**: The primary analysis, correlating scores *between* the two procedures.
+* **Analysis of Response Pattern Consistency**: Participants were qualitatively classified based on their choice behavior (e.g., "Typical", "Always Immediate"). Contingency table analysis and a Chi-Squared test were used to determine if individuals exhibited consistent response styles across both measurement tools.
+* **Group-Level Model Fitting**: Non-linear (hyperboloid) and logistic models were fit to aggregate data to verify data quality and replicate established patterns in the literature, providing a baseline for the individual-level analyses.
 
-* **Required Packages**: `dplyr`, `tidyr`, `readr`, `ggplot2`, `minpack.lm`, `betareg`, `multcomp`, `gmodels`, and others as listed in the script.
+---
+
+## Repository Contents
+
+* `./Analysis/analysis.qmd`
+    * A **Quarto** document containing the complete, end-to-end analysis in **R**.
+    * **Core Tools**: `tidyverse` (data manipulation), `minpack.lm` (non-linear modeling), `betareg` (specialized regression), `gmodels` (contingency tables), `ggplot2` (visualization).
+
+* `./Analysis/analysis.ipynb`
+    * A **Jupyter Notebook** containing a full replication of the analysis in **Python**.
+    * **Core Tools**: `pandas` (data manipulation), `scipy.optimize` (non-linear modeling), `statsmodels` (GLMs), `pingouin` (correlations), `seaborn` (visualization).
+
+* `./Figure/` 
+    * Contains the poster used to present the findings of this research at the 50th ABAI convention.
+
+* `./Figure/`
+    * Contains figures generated by the analysis scripts, matching those in the publication.
+
+---
+
+## Reproducibility & Environment
+
+To execute these analyses, you will need the appropriate software environment and the raw data from the OSF repository.
+
+### R Environment (`analysis.qmd`)
+
+* **Key Packages**: `tidyverse`, `minpack.lm`, `betareg`, `multcomp`, `gmodels`, `here`
 * **Installation**:
     ```R
-    install.packages(c("tidyverse", "minpack.lm", "betareg", "multcomp", "gmodels", "here", "psych"))
+    install.packages(c("tidyverse", "minpack.lm", "betareg", "multcomp", "gmodels", "here"))
     ```
 
-### Python Environment (`/Analysis/analysis.ipynb`)
+### Python Environment (`analysis.ipynb`)
 
-* **Required Packages**: `pandas`, `numpy`, `scipy`, `lmfit`, `statsmodels`, `seaborn`, `scikit-learn`, `openpyxl`.
+* **Key Packages**: `pandas`, `numpy`, `scipy`, `statsmodels`, `seaborn`, `pingouin`
 * **Installation**:
     ```bash
-    pip install pandas numpy scipy lmfit statsmodels seaborn scikit-learn openpyxl
+    pip install pandas numpy scipy statsmodels seaborn pingouin
     ```
