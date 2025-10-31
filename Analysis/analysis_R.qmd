@@ -10,6 +10,9 @@ format:
     self-contained: true
     theme: cosmo
     mainfont: "Garamond"
+execute:
+  warning: false
+  message: false
 engine: knitr
 ---
 
@@ -57,6 +60,7 @@ library(lemon)
 library(tidyverse)
 library(here)
 library(janitor)
+library(readxl)
 
 # --- Custom Functions ---
 
@@ -100,59 +104,69 @@ This section details the entire data processing pipeline. The raw data is loaded
 Finally, individual choice patterns are classified for a subsequent consistency analysis.
 
 ```{r load_data}
-#| message: false
-#| warning: false
-
 # --- 2. DATA LOADING AND PROCESSING ---
 
 # --- Load and Clean Raw Data ---
-setwd(here::here())
-data_raw <- read_csv("R Code/Data/DelayLoss.csv") |> select(-1)
-
-# Filter to final sample:
-# - Remove participants who failed attention checks (check == 7)
-# - Remove data from MTurk due to high failure rates as noted in the paper
-data_clean <- data_raw |>
-  filter(check == 7) |>
-  filter(provider != "MTurk") |>
-  select(-provider) |>
-  # Re-assign sequential participant IDs after filtering
-  mutate(id = rep(1:n_distinct(id), each = n_distinct(procedure, amt, iv)))
+adj_amt_data <- read_excel("Data_AdjAmt_DLQ.xlsx", sheet = 1) |>
+  rename(ID = `Participant Number`, Delay = `Delay (months)`) |>
+  mutate(Amount = case_when(Amount == 90 ~ "$90", 
+                            Amount == 240 ~ "$240", 
+                            Amount == 1500 ~ "$1,500"),
+         Procedure = "Adj-Amt")
+dlq_data <- read_excel("Data_AdjAmt_DLQ.xlsx", sheet = 2) |>
+  rename(ID = `Participant Number`, Q_ID = `Question Number`) |>
+  mutate(Procedure = "DLQ")
 
 # --- Calculate Scores for the Adjusting-Amount (Adj-Amt) Procedure ---
-adj_amt_scores <- data_clean |>
-  filter(procedure == "aa") |>
-  group_by(id, amt) |>
+adj_amt_scores <- adj_amt_data |>
+  group_by(Procedure, ID, Amount) |>
   summarise(
     # 1. Atheoretical measure: Area Under the Curve (AuC)
-    auc_adj_amt = auc(iv / 108, value),
+    auc_adj_amt = auc(Delay / 108, RSV),
     # 2. Theoretical measure: log(k) from a simple hyperbola
     # CORRECTED: Fit the model for k directly and then log-transform the result.
     # This is more explicit and less prone to reparameterization errors.
     logk_adj_amt = tryCatch({
-      fit <- nlsLM(value ~ 1 / (1 + k * iv), start = list(k = 0.01))
+      fit <- nlsLM(RSV ~ 1 / (1 + k * Delay), start = list(k = 0.01))
       log(coef(fit)[['k']])
     }, error = function(e) NA),
     .groups = 'drop'
   )
 
+# Create a lookup table with the fixed parameters for each of the 27 DLQ items.
+# This avoids hardcoding values and makes the code cleaner and less error-prone.
+dlq_item_parameters <- tibble(
+  Q_ID = 1:27,
+  # 'k' is the discounting parameter associated with each choice item
+  k = c(0.014000, 0.000057, 0.000880, 0.000057, 0.001800, 0.000140, 0.000880, 0.000022, 
+        0.005900, 0.000890, 0.000022, 0.000140, 0.000140, 0.002300, 0.000009, 0.000057,
+        0.014000, 0.000340, 0.000009, 0.005800, 0.005500, 0.000022, 0.002300, 0.014000, 
+        0.000340, 0.000340, 0.000009),
+  # Amount block for the larger, delayed reward
+  Amount = c("$165", "$75", "$240", "$180", "$225", "$90", "$150", "$90", "$240", 
+             "$105", "$255", "$180", "$255", "$150", "$105", "$225", "$90", "$165", 
+             "$240", "$180", "$105", "$150", "$75", "$255", "$75", "$225", "$165")
+) |>
+  mutate(Amount = case_when(Amount %in% c("$75", "$90", "$105") ~ "$90",
+                            Amount %in% c("$150", "$165", "$180") ~ "$165",
+                            Amount %in% c("$225", "$240", "$255") ~ "$240"))
+
 # --- Calculate Scores for the Delayed Losses Questionnaire (DLQ) ---
-dlq_scores <- data_clean |>
-  filter(procedure == "mcq") |>
-  mutate(iv = case_when(
-    iv == 0.00088 ~ 0.00089,
-    iv == 0.00180 ~ 0.00230,
-    iv %in% c(0.0058, 0.0059) ~ 0.00550,
-    TRUE ~ iv
-  )) |>
-  group_by(id, amt) |>
+dlq_data <- dlq_data |>
+  left_join(dlq_item_parameters, by = "Q_ID") |>
+  mutate(k = case_when(k == 0.00088 ~ 0.00089,
+                       k == 0.00180 ~ 0.00230,
+                       k %in% c(0.0058, 0.0059) ~ 0.00550,
+                       TRUE ~ k)) 
+dlq_scores <- dlq_data |>
+  group_by(Procedure, ID, Amount) |>
   summarise(
     # 1. Atheoretical measure: Proportion of immediate choices (out of 9 items)
-    prop_imm_dlq = mean(value),
+    prop_imm_dlq = mean(Choice),
     # 2. Theoretical measure: log(k) estimated from the choice pattern
     logk_dlq = {
-      choices <- value
-      k_values <- iv
+      choices <- Choice
+      k_values <- k
       # Handle non-switching participants
       if (all(choices == 1)) {
         log(min(k_values)) # Always immediate -> largest k
@@ -170,30 +184,27 @@ dlq_scores <- data_clean |>
     .groups = 'drop'
   )
 
-# --- Combine All Scores into a Single Tidy Dataframe ---
-scores_combined <- full_join(adj_amt_scores, dlq_scores, by = c("id", "amt"))
-
 # --- Classify Individual Choice Patterns ---
-adj_amt_patterns <- data_clean |>
-  filter(procedure == "aa" & amt != 3) |>
-  group_by(id, amt) |>
-  summarise(correlation = cor(value, log(iv)), mean_sv = mean(value), .groups = 'drop') |>
+adj_amt_patterns <- adj_amt_data |>
+  filter(Amount != "$1,500") |>
+  group_by(ID, Amount) |>
+  summarise(correlation = cor(RSV, log(Delay)), mean_sv = mean(RSV), .groups = 'drop') |>
   mutate(
     correlation = ifelse(is.na(correlation), 0, correlation),
     pattern = case_when(
-      correlation < 0 | mean_sv == min(subset(data_clean, procedure == "aa")$value) ~ "Typical",
+      correlation < 0 | mean_sv == min(adj_amt_data$RSV) ~ "Typical",
       correlation > 0 ~ "Atypical",
-      mean_sv == max(subset(data_clean, procedure == "aa")$value) ~ "Always immediate"
+      mean_sv == max(adj_amt_data$RSV) ~ "Always immediate"
       ),
     pattern = ifelse(is.na(pattern), "Typical", pattern)
   ) |>
-  group_by(id) |>
+  group_by(ID) |>
   summarise(pattern_adj_amt = if_else(n_distinct(pattern) == 1, first(pattern), "Inconsistent"))
 
-dlq_patterns <- data_clean |>
-  filter(procedure == "mcq" & amt != 2) |>
-  group_by(id, amt) |>
-  summarise(correlation = cor(value, log(iv)), mean_choice = mean(value), .groups = 'drop') |>
+dlq_patterns <- dlq_data |>
+  filter(Amount != "$165") |>
+  group_by(ID, Amount) |>
+  summarise(correlation = cor(Choice, log(k)), mean_choice = mean(Choice), .groups = 'drop') |>
   mutate(
     correlation = if_else(is.na(correlation), 0, correlation),
     pattern = case_when(
@@ -202,16 +213,21 @@ dlq_patterns <- data_clean |>
       mean_choice == 1 ~ "Always immediate"
     )
   ) |>
-  group_by(id) |>
+  group_by(ID) |>
   summarise(pattern_dlq = if_else(n_distinct(pattern) == 1, first(pattern), "Inconsistent"))
 
-pattern_consistency <- full_join(adj_amt_patterns, dlq_patterns, by = "id")
+pattern_consistency <- full_join(adj_amt_patterns, dlq_patterns, by = "ID")
 
 # --- Create Group-Level Dataframe for Plotting (Figure 1) ---
-data_group_level <- data_clean |>
-  rename("plot_x" = "iv") |>
-  group_by(procedure, amt, plot_x) |>
-  summarise(mean_value = mean(value), .groups = 'drop')
+adj_amt_group_level <- adj_amt_data |>
+  group_by(Amount, Delay) |>
+  summarise(mean_RSV = mean(RSV), .groups = 'drop') |>
+  mutate(Amount = factor(Amount, levels = c("$90", "$240", "$1,500")))
+
+dlq_group_level <- dlq_data |>
+  group_by(Amount, k) |>
+  summarise(Prop = mean(Choice), .groups = 'drop') |>
+  mutate(Amount = factor(Amount, levels = c("$90", "$165", "$240")))
 ```
 
 ## Group-Level Analysis
@@ -219,20 +235,15 @@ data_group_level <- data_clean |>
 This section replicates Figure 1 from the publication, visualizing the aggregate discounting patterns for both procedures. The plots confirm that the data conform to established findings: subjective value decreases with delay (Adj-Amt), and the probability of choosing the immediate option increases with the question's *k* parameter (DLQ). Goodness-of-fit statistics confirm that the chosen non-linear models describe the data well.
 
 ```{r group_analysis}
-#| message: false
-#| warning: false
-
 # --- 3. GROUP-LEVEL ANALYSIS (FIGURE 1 REPLICATION) ---
 
 # --- Plot for Adjusting-Amount Procedure ---
-plot_adj_amt <- data_group_level |>
-  filter(procedure == "aa") |>
-  mutate(amount_label = factor(amt, levels = c(1,2,3), labels = c("$90", "$240","$1,500"))) |>
-  ggplot(aes(x = plot_x, y = mean_value, shape = amount_label, color = amount_label, linetype = amount_label)) +
+plot_adj_amt <- adj_amt_group_level |>
+  ggplot(aes(x = Delay, y = mean_RSV, shape = Amount, color = Amount, linetype = Amount)) +
   # Fit hyperboloid discounting functions to the group means
   geom_smooth(method = "nlsLM", formula = y ~ 1 / (1 + exp(k) * x)^s, 
               method.args = list(start = list(k = -4, s = 1)), se = FALSE, size = 0.8) +
-  geom_point(aes(fill = amount_label), size = 4, stroke = 1) +
+  geom_point(aes(fill = Amount), size = 4, stroke = 1) +
   scale_y_continuous(limits = c(0, 1.05), breaks = seq(0, 1, by = 0.2)) +
   scale_x_continuous(limits = c(0, 113), breaks = c(4, 18, 60, 108)) +
   scale_shape_manual(name = "Amount", values = c("$90"=21, "$240"=22, "$1,500"=24)) +
@@ -243,13 +254,16 @@ plot_adj_amt <- data_group_level |>
   theme_bw() + mattheme + theme(legend.position = c(0.8, 0.25))
 
 # --- Plot for Delayed Losses Questionnaire ---
-plot_dlq <- data_group_level |>
-  filter(procedure == "mcq") |>
-  mutate(amount_label = factor(amt, levels = c(1,2,3), labels = c("$75-105", "$150-180","$225-255"))) |>
-  ggplot(aes(x = plot_x, y = mean_value, shape = amount_label, color = amount_label, linetype = amount_label)) +
+plot_dlq <- dlq_group_level |>
+  mutate(Amount = case_when(Amount == "$90" ~ "$75-105",
+                            Amount == "$165" ~ "$150-180",
+                            Amount == "$240" ~ "$225-255")) |>
+  ggplot(aes(x = k, y = Prop, shape = Amount, color = Amount, linetype = Amount)) +
   # Fit logistic functions to the choice proportions
-  geom_smooth(method = "glm", method.args = list(family = "binomial"), se = FALSE, size = 0.8) +
-  geom_point(aes(fill = amount_label), size = 4, stroke = 1) +
+  geom_smooth(method = "nlsLM", formula = y ~ 1 / (1 + exp( - ( (x) - (a) ) * (r) ) ),
+              method.args = list(start = list(a = -9.3, r = .58), control = list(maxiter = 1000)), 
+              se = FALSE, size = 0.8) +
+  geom_point(aes(fill = Amount), size = 4, stroke = 1) +
   scale_x_continuous(trans = 'log10', breaks = c(1e-5, 1e-4, 1e-3, 1e-2), labels = c("0.00001", "0.0001", "0.001", "0.01")) +
   scale_y_continuous(limits = c(0, 1.05), breaks = seq(0, 1, by = 0.2)) +
   scale_shape_manual(name = "Amount", values = c("$75-105"=21, "$150-180"=22, "$225-255"=24)) +
@@ -264,21 +278,19 @@ ggarrange(plot_adj_amt, plot_dlq, ncol = 2)
 
 # --- Goodness-of-Fit (R-squared) for Group-Level Models ---
 cat("--- Adj-Amt: R-squared for Hyperboloid Fits ---\n")
-adj_amt_r2 <- data_group_level |>
-  filter(procedure == "aa") |>
-  group_by(amt) |>
+adj_amt_r2 <- adj_amt_group_level |>
+  group_by(Amount) |>
   summarise(R2 = modelr::rsquare(
-    nlsLM(mean_value ~ 1 / (1 + exp(k) * plot_x)^s, start = list(k = -4, s = 1)),
+    nlsLM(mean_RSV ~ 1 / (1 + exp(k) * Delay)^s, start = list(k = -4, s = 1)),
     data = pick(everything())
   ))
 print(adj_amt_r2, digits = 3)
 
 cat("\n--- DLQ:  R-squared for Logistic Fits ---\n")
-dlq_r2 <- data_group_level |>
-  filter(procedure == "mcq") |>
-  group_by(amt) |>
+dlq_r2 <- dlq_group_level |>
+  group_by(Amount) |>
   summarise(R2 = modelr::rsquare(
-    nlsLM(mean_value ~ 1 / (1 + exp( - ( log(plot_x) - (x) ) * (r) ) ), 
+    nlsLM(Prop ~ 1 / (1 + exp( - ( log(k) - (x) ) * (r) ) ), 
     start = list(x = -10, r = 1), control = list(maxiter = 1000)),
     data = pick(everything())
   ))
@@ -290,69 +302,68 @@ print(dlq_r2, digits = 3)
 This is the core of the study. First, **reliability** is assessed by examining the correlations between different loss amounts *within* each procedure. High correlations indicate that the procedure consistently measures the same construct regardless of the specific amounts used. Second, **convergent validity** is tested by examining the correlations *between* the two procedures. High correlations would provide strong evidence that both methods are measuring the same underlying construct.
 
 ```{r reliability_validity}
-#| warning: false
-#| message: false
-
 # --- 4. INDIVIDUAL-LEVEL RELIABILITY AND VALIDITY ---
 
 # --- Within-Procedure Reliability (Alternate-Forms) ---
 # This assesses if the measures are consistent across different amounts.
-cat("--- Reliability: Correlations Between Amounts Within Each Procedure ---\n")
-reliability_table <- scores_combined |>
-  pivot_longer(names_to = "measure", values_to = "score", cols = c(auc_adj_amt, logk_adj_amt, prop_imm_dlq, logk_dlq)) |>
+
+cat("--- Reliability: Correlations Between Amounts Within Adjusting-Amount Procedure ---\n")
+adj_amt_reliability_data <- adj_amt_scores |>
+  pivot_longer(names_to = "measure", values_to = "score", 
+               cols = c(auc_adj_amt, logk_adj_amt)) |>
   separate(measure, into = c("measure_type", "procedure"), sep = "_", extra = "merge") |>
-  drop_na(score) |>
-  pivot_wider(names_from = amt, values_from = score, names_prefix = "amount_") |>
-  group_by(procedure, measure_type) |>
-  summarise(
-    Small_vs_Medium = cor(amount_1, amount_2, use = "pairwise.complete.obs"),
-    Small_vs_Large = cor(amount_1, amount_3, use = "pairwise.complete.obs"),
-    Medium_vs_Large = cor(amount_2, amount_3, use = "pairwise.complete.obs"),
-    .groups = 'drop'
-  )
-print(reliability_table, digits = 3)
+  pivot_wider(names_from = Amount, values_from = score, names_prefix = "amount_") |>
+  group_by(measure_type) |> select(5:7) 
+auc_reliability_table <- filter(adj_amt_reliability_data, measure_type == "auc") |>
+  ungroup() |> select(-1) |> 
+  cor()
+print(auc_reliability_table, digits = 3)
+logk_reliability_table <- filter(adj_amt_reliability_data, measure_type == "logk") |>
+  ungroup() |> select(-1) |> 
+  cor()
+print(logk_reliability_table, digits = 3)
+
+cat("--- Reliability: Correlations Between Amounts Within DLQ ---\n")
+dlq_reliability_data <- dlq_scores |>
+  pivot_longer(names_to = "measure", values_to = "score", 
+               cols = c(prop_imm_dlq, logk_dlq)) |>
+  separate(measure, into = c("measure_type", "procedure"), sep = "_", extra = "merge") |>
+  pivot_wider(names_from = Amount, values_from = score, names_prefix = "amount_") |>
+  group_by(measure_type) |> select(5:7) 
+prop_reliability_table <- filter(dlq_reliability_data, measure_type == "prop") |>
+  ungroup() |> select(-1) |> 
+  cor()
+print(prop_reliability_table, digits = 3)
+logk_reliability_table <- filter(dlq_reliability_data, measure_type == "logk") |>
+  ungroup() |> select(-1) |> 
+  cor()
+print(logk_reliability_table, digits = 3)
 
 # --- Within-Procedure Concurrent Validity ---
 # This assesses if the atheoretical and theoretical measures capture the same information.
 # The correlation should be high and negative, as higher AuC/prop_imm means steeper
 # discounting, while higher logk means shallower discounting.
 cat("\n--- Concurrent Validity: Correlations Between Atheoretical and Theoretical Measures ---\n")
-concurrent_validity_table <- scores_combined |>
-  group_by(amt) |>
-  summarise(
-    Adj_Amt_Corr = cor(auc_adj_amt, logk_adj_amt, use = "pairwise.complete.obs"),
-    DLQ_Corr = cor(prop_imm_dlq, logk_dlq, use = "pairwise.complete.obs"),
-    .groups = 'drop'
-  )
-print(concurrent_validity_table, digits = 3)
+adj_amt_concurrent_validity <- adj_amt_scores |>
+  group_by(Amount) |>
+  summarise(Adj_Amt_Corr = cor(auc_adj_amt, logk_adj_amt, use = "pairwise.complete.obs"), .groups = 'drop')
+print(adj_amt_concurrent_validity, digits = 3)
+
+dlq_concurrent_validity <- dlq_scores |>
+  group_by(Amount) |>
+  summarise(DLQ_Corr = cor(prop_imm_dlq, logk_dlq, use = "pairwise.complete.obs"), .groups = 'drop')
+print(dlq_concurrent_validity, digits = 3)
 
 # --- Between-Procedure Convergent Validity (Main Result) ---
-# - Adj-Amt Amount 1 ($90) is matched with DLQ Amount 1 ($90 average).
-# - Adj-Amt Amount 2 ($240) is matched with DLQ Amount 3 ($240 average).
 cat("\n--- Convergent Validity: Correlations Between Procedures (Main Result) ---\n")
-# Create separate wide-format data for each procedure
-adj_amt_wide <- adj_amt_scores |>
-  pivot_wider(id_cols = id, names_from = amt, values_from = c(auc_adj_amt, logk_adj_amt))
-
-dlq_wide <- dlq_scores |>
-  pivot_wider(id_cols = id, names_from = amt, values_from = c(prop_imm_dlq, logk_dlq))
-
-# Join them into a single wide dataframe for easy correlation
-validity_data_wide <- left_join(adj_amt_wide, dlq_wide, by = "id")
-
-# Calculate the correlations for the matched amounts
-convergent_validity_results <- tibble(
-  Amount_Match = c("$90 vs $90", "$240 vs $240"),
-  Atheoretical_Corr = c(
-    cor(validity_data_wide$auc_adj_amt_1, validity_data_wide$prop_imm_dlq_1, use = "pairwise.complete.obs"),
-    cor(validity_data_wide$auc_adj_amt_2, validity_data_wide$prop_imm_dlq_3, use = "pairwise.complete.obs")
-  ),
-  Theoretical_Corr = c(
-    cor(validity_data_wide$logk_adj_amt_1, validity_data_wide$logk_dlq_1, use = "pairwise.complete.obs"),
-    cor(validity_data_wide$logk_adj_amt_2, validity_data_wide$logk_dlq_3, use = "pairwise.complete.obs")
-  )
-)
-print(convergent_validity_results, digits = 3)
+convergent_validity_table <- full_join(
+    filter(adj_amt_scores, Amount != "$1,500")[,-1],
+    filter(dlq_scores, Amount != "$165")[,-1]
+  ) |>
+  group_by(Amount) |>
+  summarise(atheoretical_correlation = cor(auc_adj_amt, prop_imm_dlq),
+            theoretical_correlation = cor(logk_adj_amt, logk_dlq))
+print(convergent_validity_table, digits = 3)
 ```
 
 ## Analysis of Choice Patterns
@@ -360,9 +371,6 @@ print(convergent_validity_results, digits = 3)
 Finally, this section examines whether individuals show consistent *qualitative* patterns of choice across the two procedures. Participants are classified based on their response styles, and a contingency table analysis is used to test if a participant's classification on one procedure is significantly associated with their classification on the other.
 
 ```{r choice_pattern}
-#| warning: false
-#| message: false
-
 # --- 5. ANALYSIS OF CHOICE PATTERNS ---
 
 # --- Frequencies of Choice Patterns by Procedure ---

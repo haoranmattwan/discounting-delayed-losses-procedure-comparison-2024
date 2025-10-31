@@ -16,17 +16,17 @@ The data are publicly available on the Open Science Framework at <https://osf.io
 
 ---
 
-## Methodological Core
+## Methodological Approach
 
-This project demonstrates expertise in the following quantitative methods:
+The analysis employs a multi-step psychometric validation workflow to compare the two measurement procedures for delayed losses:
 
-* **Individual-Level Parameter Estimation**: Custom functions were developed to process raw trial data from each participant and derive key discounting metrics. This includes an atheoretical measure (Area under the Curve) and a theoretical parameter (the hyperbolic discounting rate, *k*), estimated via non-linear least squares.
-* **Psychometric Evaluation**: A comprehensive suite of correlational analyses was conducted to formally assess the measurement properties of the instruments, including:
-    * **Alternate-Forms Reliability**: Correlations between different monetary amounts *within* each procedure.
-    * **Concurrent Validity**: Correlations between the atheoretical and theoretical measures *within* each procedure.
-    * **Convergent Validity**: The primary analysis, correlating scores *between* the two procedures.
-* **Analysis of Response Pattern Consistency**: Participants were qualitatively classified based on their choice behavior (e.g., "Typical", "Always Immediate"). Contingency table analysis and a Chi-Squared test were used to determine if individuals exhibited consistent response styles across both measurement tools.
-* **Group-Level Model Fitting**: Non-linear (hyperboloid) and logistic models were fit to aggregate data to verify data quality and replicate established patterns in the literature, providing a baseline for the individual-level analyses.
+* **Individual-Level Parameter Estimation**: Custom functions were used to process raw trial data from each participant and derive key discounting metrics. This included an atheoretical measure (Area under the Curve) and a theoretical parameter (the hyperbolic discounting rate, *k*), which was estimated via non-linear least squares.
+
+* **Psychometric Evaluation**: A comprehensive suite of correlational analyses was conducted to formally assess the measurement properties of the instruments, including **alternate-forms reliability** (between different monetary amounts within a procedure), **concurrent validity** (between the atheoretical and theoretical measures), and **convergent validity** (the primary analysis, correlating scores between the two procedures).
+
+* **Analysis of Response Pattern Consistency**: To assess behavioral consistency, participants were qualitatively classified based on their choice patterns (e.g., "Typical," "Always Immediate"). A Chi-Squared test of independence was then used to determine if individuals exhibited consistent response styles across both measurement tools.
+
+* **Group-Level Model Fitting**: As an initial data quality check, non-linear (hyperboloid) and logistic models were fit to aggregate data to verify that the results replicated established patterns in the literature, providing a baseline for the individual-level analyses.
 
 ---
 
