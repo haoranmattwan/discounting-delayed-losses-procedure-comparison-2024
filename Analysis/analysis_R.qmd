@@ -26,6 +26,7 @@ This document provides the complete R code to replicate the analyses from the pu
 The primary goal of this study is **methodological validation**. It formally tests whether a brief, 27-item survey (the Delayed Losses Questionnaire, or DLQ) provides a valid and reliable measure of delay discounting when compared to the more resource-intensive, iterative Adjusting-Amount (Adj-Amt) procedure.
 
 ### Analysis Workflow
+
 1.  **Setup**: Loads all necessary packages and defines custom functions.
 2.  **Data Processing**: Cleans and transforms the raw data, calculating four key discounting measures (two for each procedure).
 3.  **Group-Level Analysis**: Visualizes aggregate choice patterns and fits non-linear models to assess data quality.
@@ -36,13 +37,7 @@ The primary goal of this study is **methodological validation**. It formally tes
 The data used in this analysis are publicly available on the Open Science Framework at [https://osf.io/emb2q/](https://osf.io/emb2q/).
 
 ```{r setup}
-#| message: false
-#| warning: false
-
 # --- 1. SETUP: PACKAGES, OPTIONS, AND FUNCTIONS ---
-
-# Set global chunk options to suppress messages and warnings for a clean HTML output
-knitr::opts_chunk$set(message = FALSE, warning = FALSE, error = FALSE)
 
 # --- Load Packages ---
 # Modeling & Statistics
@@ -94,6 +89,7 @@ auc <- function(x, y) {
 ## Data Processing
 
 This section details the entire data processing pipeline. The raw data is loaded, filtered to the final sample (N = 431), and then transformed to calculate the four primary discounting scores:
+
 - **For the Adj-Amt procedure**:
     1. `auc_adj_amt`: Area Under the Curve (atheoretical).
     2. `logk_adj_amt`: The log-transformed *k* parameter from a simple hyperbolic model (theoretical).
@@ -232,7 +228,7 @@ dlq_group_level <- dlq_data |>
 
 ## Group-Level Analysis
 
-This section replicates Figure 1 from the publication, visualizing the aggregate discounting patterns for both procedures. The plots confirm that the data conform to established findings: subjective value decreases with delay (Adj-Amt), and the probability of choosing the immediate option increases with the question's *k* parameter (DLQ). Goodness-of-fit statistics confirm that the chosen non-linear models describe the data well.
+This section replicates Figure 1 from the publication, visualizing the aggregate discounting patterns for both procedures. The plots confirm that the data conform to established findings: subjective value decreases with delay (Adj-Amt), and the proportion of choosing the immediate option increases with the question's *k* parameter (DLQ). Goodness-of-fit statistics confirm that the chosen non-linear models describe the data well.
 
 ```{r group_analysis}
 # --- 3. GROUP-LEVEL ANALYSIS (FIGURE 1 REPLICATION) ---
