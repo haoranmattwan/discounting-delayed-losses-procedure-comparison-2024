@@ -1,17 +1,36 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 .ipynb_checkpoints/
 .venv/
 env/
 
-# R
+# R and Quarto
 .Rhistory
 .RData
 .Rproj.user/
+*.Rproj
 renv/library/
 renv/staging/
+.quarto/
+*_files/
 
-# OS / Editor specific
+# OS and editors
 .DS_Store
+._*
 .vscode/
+
+# Temporary render files
+/tmp/
+
+# Local research archive; not part of the public reproducibility repository
+/Analysis/Data_AdjAmt_DLQ.xlsx
+/Division 25 Innovative Student Research Award/
+/Literature/
+/Manuscript/
+/R Code/
+/Presentation/Lab.pptx
+/Presentation/ABAI 2024/Application/
+/Presentation/ABAI 2024/Poster/
+/Presentation/ABAI 2024/Receipt/
+/Wan, Green, & Myerson, 2024.pdf

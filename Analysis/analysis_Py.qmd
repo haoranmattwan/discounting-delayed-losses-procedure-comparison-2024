@@ -1,0 +1,527 @@
+---
+title: "Delayed Monetary Losses: Reproducible Analysis in Python"
+subtitle: "Adjusting-Amount and Delayed Losses Questionnaire measures"
+author: "Haoran Wan"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    code-fold: true
+    code-summary: "Show analysis code"
+    self-contained: true
+    theme: default
+jupyter: python3
+execute:
+  echo: true
+  warning: false
+---
+
+## Scope
+
+This document reproduces the primary measurement-validation analyses reported in:
+
+> Wan, H., Green, L., & Myerson, J. (2024). Delayed monetary losses: Do different procedures and discounting measures assess the same construct? *Behavioural Processes, 222*, 105101. <https://doi.org/10.1016/j.beproc.2024.105101>
+
+The analysis reproduces Figure 1 and Tables 2-4: group-level model fits, convergent validity between procedures, concurrent validity between scoring measures, alternate-forms reliability across amounts, and consistency of individual discounting patterns. The final section checks the computed results against the values printed in the article.
+
+The anonymized data are archived on the [Open Science Framework](https://osf.io/emb2q/). The repository copy is stored in `data/Data_AdjAmt_DLQ.csv` for computational reproducibility.
+
+## Setup
+
+```{python}
+from pathlib import Path
+import platform
+import warnings
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import scipy
+from IPython.display import display
+from scipy.optimize import curve_fit
+from scipy.stats import chi2, pearsonr
+
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+pd.options.display.float_format = "{:.3f}".format
+
+
+def locate_data() -> Path:
+    """Locate the public data when run from the repository root or Analysis/."""
+    candidates = (
+        Path("data/Data_AdjAmt_DLQ.csv"),
+        Path("../data/Data_AdjAmt_DLQ.csv"),
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    raise FileNotFoundError(
+        "data/Data_AdjAmt_DLQ.csv was not found. Run from the repository root "
+        "or the Analysis directory."
+    )
+
+
+DATA_PATH = locate_data()
+RNG_SEED = 20240913
+np.random.seed(RNG_SEED)
+```
+
+### Analysis functions
+
+```{python}
+AMOUNT_ORDER_ADJ = ["$90", "$240", "$1,500"]
+AMOUNT_ORDER_DLQ = ["$90", "$165", "$240"]
+COMMON_AMOUNTS = ["$90", "$240"]
+PATTERN_ORDER = ["Typical", "Always immediate", "Atypical", "Inconsistent"]
+
+
+def area_under_curve(delay, subjective_value):
+    """Trapezoidal AuC with delay normalized by the longest delay (108 months)."""
+    order = np.argsort(delay)
+    x = np.asarray(delay, dtype=float)[order] / 108.0
+    y = np.asarray(subjective_value, dtype=float)[order]
+    return np.trapezoid(y=y, x=x)
+
+
+def simple_hyperbola(delay, k):
+    """Simple hyperbolic discounting function used for individual Adj-Amt scores."""
+    return 1.0 / (1.0 + k * np.asarray(delay))
+
+
+def hyperboloid(delay, log_k, s):
+    """Hyperboloid discounting function used for group-level Adj-Amt data."""
+    return 1.0 / (1.0 + np.exp(log_k) * np.asarray(delay)) ** s
+
+
+def logistic(log_k, midpoint, slope):
+    """Logistic growth function used for group-level DLQ data."""
+    return 1.0 / (1.0 + np.exp(-(np.asarray(log_k) - midpoint) * slope))
+
+
+def r_squared(observed, predicted):
+    observed = np.asarray(observed)
+    predicted = np.asarray(predicted)
+    return 1.0 - np.sum((observed - predicted) ** 2) / np.sum(
+        (observed - observed.mean()) ** 2
+    )
+
+
+def score_adj_amt(group):
+    """Calculate individual AuC and log(k) for one Adj-Amt amount condition."""
+    group = group.sort_values("Delay")
+    auc = area_under_curve(group["Delay"], group["RSV"])
+    try:
+        parameters, _ = curve_fit(
+            simple_hyperbola,
+            group["Delay"],
+            group["RSV"],
+            p0=[0.01],
+            maxfev=10_000,
+        )
+        log_k = np.log(parameters[0]) if parameters[0] > 0 else np.nan
+    except (RuntimeError, ValueError, FloatingPointError):
+        log_k = np.nan
+    return pd.Series({"auc_adj_amt": auc, "logk_adj_amt": log_k})
+
+
+def canonical_dlq_k(k):
+    """Map slightly different item values to the nine DLQ scoring thresholds."""
+    if np.isclose(k, 0.00088):
+        return 0.00089
+    if np.isclose(k, 0.0018):
+        return 0.0023
+    if np.isclose(k, 0.0058) or np.isclose(k, 0.0059):
+        return 0.0055
+    return float(k)
+
+
+def score_dlq(group):
+    """Calculate immediate-choice proportion and the most consistent DLQ log(k)."""
+    choices = group["Choice"].to_numpy(dtype=int)
+    raw_k = group["k_raw"].to_numpy(dtype=float)
+    scoring_k = np.array([canonical_dlq_k(value) for value in raw_k])
+
+    candidates = np.unique(scoring_k)
+    consistency = np.array(
+        [
+            np.sum(
+                ((choices == 0) & (scoring_k <= candidate))
+                | ((choices == 1) & (scoring_k >= candidate))
+            )
+            for candidate in candidates
+        ]
+    )
+    best_candidates = candidates[consistency == consistency.max()]
+
+    # Use the original item-specific k values after identifying the best
+    # canonical threshold. This reproduces the published Kirby-style scoring.
+    best_raw_k = raw_k[np.isin(scoring_k, best_candidates)]
+    log_k = np.log(np.exp(np.log(best_raw_k).mean()))
+
+    return pd.Series(
+        {
+            "prop_imm_dlq": choices.mean(),
+            "logk_dlq": log_k,
+        }
+    )
+
+
+def correlation(x, y):
+    """Return Pearson r, two-sided p, and pairwise-complete n."""
+    complete = pd.DataFrame({"x": x, "y": y}).dropna()
+    result = pearsonr(complete["x"], complete["y"])
+    return result.statistic, result.pvalue, len(complete)
+
+
+def format_p(p):
+    return "< .001" if p < 0.001 else f"{p:.3f}"
+
+
+def collapse_patterns(values):
+    """Label two amount-specific patterns as consistent or inconsistent."""
+    values = list(values)
+    return values[0] if len(set(values)) == 1 else "Inconsistent"
+```
+
+## Data and quality checks
+
+The public file contains the analyzed Prolific sample after the exclusions reported in the article. `Choice = 1` denotes selection of the smaller, immediate payment on the DLQ.
+
+```{python}
+raw = pd.read_csv(DATA_PATH, index_col=0)
+
+adj_amt = (
+    raw.loc[raw["Procedure"].eq("Adj-Amt")]
+    .rename(columns={"IV": "Delay", "DV": "RSV"})
+    .copy()
+)
+
+dlq = (
+    raw.loc[raw["Procedure"].eq("MCQ")]
+    .rename(columns={"IV": "k_raw", "DV": "Choice"})
+    .copy()
+)
+dlq["Procedure"] = "DLQ"
+dlq["Amount"] = dlq["Amount"].map(
+    {"$75-$105": "$90", "$150-$180": "$165", "$225-$255": "$240"}
+)
+
+assert raw["ID"].nunique() == 431
+assert len(adj_amt) == 5_172 and len(dlq) == 11_637
+assert set(adj_amt["Delay"].unique()) == {4, 18, 60, 108}
+assert set(dlq["Choice"].unique()) == {0, 1}
+assert adj_amt.groupby(["ID", "Amount"]).size().eq(4).all()
+assert dlq.groupby(["ID", "Amount"]).size().eq(9).all()
+
+pd.DataFrame(
+    {
+        "procedure": ["Adjusting-Amount", "DLQ"],
+        "participants": [adj_amt["ID"].nunique(), dlq["ID"].nunique()],
+        "observations": [len(adj_amt), len(dlq)],
+        "amount conditions": [3, 3],
+        "observations per participant and amount": [4, 9],
+    }
+)
+```
+
+## Individual discounting scores
+
+For the Adj-Amt procedure, the atheoretical measure is area under the curve (AuC), and the theoretical measure is the logarithm of the best-fitting *k* from a simple hyperbola. For the DLQ, the corresponding measures are immediate-choice proportion and the logarithm of the *k* value most consistent with the participant's choices.
+
+For delayed losses, lower AuC and lower immediate-choice proportion indicate steeper discounting, whereas lower log(*k*) indicates shallower discounting. Consequently, concurrent correlations between atheoretical and theoretical measures are expected to be negative.
+
+```{python}
+adj_scores = (
+    adj_amt.groupby(["ID", "Amount"], observed=True, sort=False)
+    .apply(score_adj_amt, include_groups=False)
+    .reset_index()
+)
+
+dlq_scores = (
+    dlq.groupby(["ID", "Amount"], observed=True, sort=False)
+    .apply(score_dlq, include_groups=False)
+    .reset_index()
+)
+
+assert len(adj_scores) == len(dlq_scores) == 431 * 3
+assert adj_scores["logk_adj_amt"].notna().all()
+```
+
+## Group-level discounting (Figure 1)
+
+```{python}
+adj_group = (
+    adj_amt.groupby(["Amount", "Delay"], observed=True)["RSV"]
+    .mean()
+    .rename("mean_RSV")
+    .reset_index()
+)
+dlq_group = (
+    dlq.groupby(["Amount", "k_raw"], observed=True)["Choice"]
+    .mean()
+    .rename("prop_immediate")
+    .reset_index()
+)
+
+colors = {"$90": "#0072B2", "$165": "#E69F00", "$240": "#E69F00", "$1,500": "#009E73"}
+markers = {"$90": "o", "$165": "s", "$240": "s", "$1,500": "^"}
+line_styles = {"$90": "-", "$165": "--", "$240": "--", "$1,500": ":"}
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5.2), constrained_layout=True)
+adj_r2 = {}
+for amount in AMOUNT_ORDER_ADJ:
+    group = adj_group.loc[adj_group["Amount"].eq(amount)].sort_values("Delay")
+    parameters, _ = curve_fit(
+        hyperboloid,
+        group["Delay"],
+        group["mean_RSV"],
+        p0=[-4, 1],
+        maxfev=10_000,
+    )
+    predicted = hyperboloid(group["Delay"], *parameters)
+    adj_r2[amount] = r_squared(group["mean_RSV"], predicted)
+    x_grid = np.linspace(0, 108, 300)
+    axes[0].plot(x_grid, hyperboloid(x_grid, *parameters), line_styles[amount], color=colors[amount])
+    axes[0].scatter(
+        group["Delay"], group["mean_RSV"], label=amount, marker=markers[amount],
+        color=colors[amount], edgecolor="black", s=62, zorder=3
+    )
+
+dlq_colors = {"$90": "#0072B2", "$165": "#E69F00", "$240": "#009E73"}
+dlq_markers = {"$90": "o", "$165": "v", "$240": "^"}
+dlq_lines = {"$90": "-", "$165": "--", "$240": ":"}
+dlq_labels = {"$90": "$75-105", "$165": "$150-180", "$240": "$225-255"}
+dlq_r2 = {}
+for amount in AMOUNT_ORDER_DLQ:
+    group = dlq_group.loc[dlq_group["Amount"].eq(amount)].sort_values("k_raw")
+    log_k = np.log(group["k_raw"].to_numpy())
+    parameters, _ = curve_fit(
+        logistic,
+        log_k,
+        group["prop_immediate"],
+        p0=[-10, 1],
+        maxfev=10_000,
+    )
+    predicted = logistic(log_k, *parameters)
+    dlq_r2[amount] = r_squared(group["prop_immediate"], predicted)
+    x_grid = np.linspace(log_k.min(), log_k.max(), 300)
+    axes[1].plot(np.exp(x_grid), logistic(x_grid, *parameters), dlq_lines[amount], color=dlq_colors[amount])
+    axes[1].scatter(
+        group["k_raw"], group["prop_immediate"], label=dlq_labels[amount],
+        marker=dlq_markers[amount], color=dlq_colors[amount], edgecolor="black", s=62, zorder=3
+    )
+
+axes[0].set(title="Adjusting-Amount", xlabel="Delay (months)", ylabel="Relative subjective value")
+axes[0].set(xticks=[4, 18, 60, 108], ylim=(0, 1.03))
+axes[1].set(title="Delayed Losses Questionnaire", xlabel="Question $k$ parameter", ylabel="Proportion choosing immediate payment")
+axes[1].set_xscale("log")
+axes[1].set_ylim(0, 1.03)
+
+for axis in axes:
+    axis.spines["top"].set_visible(False)
+    axis.spines["right"].set_visible(False)
+    axis.legend(title="Amount", frameon=False)
+    axis.grid(False)
+
+plt.show()
+
+model_fit = pd.DataFrame(
+    [
+        {"procedure": "Adj-Amt", "amount": amount, "R2": adj_r2[amount]}
+        for amount in AMOUNT_ORDER_ADJ
+    ]
+    + [
+        {"procedure": "DLQ", "amount": amount, "R2": dlq_r2[amount]}
+        for amount in AMOUNT_ORDER_DLQ
+    ]
+)
+model_fit
+```
+
+All group-level fits exceed the thresholds reported in the article: R² > .95 for Adj-Amt and R² > .97 for the DLQ.
+
+## Convergent validity between procedures (Table 2)
+
+Only the two amounts common to both procedures ($90 and $240) enter the primary convergent-validity analysis.
+
+```{python}
+common_scores = adj_scores.merge(dlq_scores, on=["ID", "Amount"], how="inner")
+common_scores = common_scores.loc[common_scores["Amount"].isin(COMMON_AMOUNTS)]
+
+convergent_rows = []
+for amount in COMMON_AMOUNTS:
+    group = common_scores.loc[common_scores["Amount"].eq(amount)]
+    for measure, x, y in (
+        ("AuC / immediate-choice proportion", "auc_adj_amt", "prop_imm_dlq"),
+        ("log(k)", "logk_adj_amt", "logk_dlq"),
+    ):
+        r, p, n = correlation(group[x], group[y])
+        convergent_rows.append({"amount": amount, "measure": measure, "r": r, "p": p, "n": n})
+
+table2 = pd.DataFrame(convergent_rows)
+table2.assign(p=table2["p"].map(format_p))
+```
+
+## Concurrent validity and alternate-forms reliability (Table 3)
+
+```{python}
+concurrent_rows = []
+for amount in AMOUNT_ORDER_ADJ:
+    group = adj_scores.loc[adj_scores["Amount"].eq(amount)]
+    r, p, n = correlation(group["auc_adj_amt"], group["logk_adj_amt"])
+    concurrent_rows.append({"procedure": "Adj-Amt", "amount": amount, "r": r, "p": p, "n": n})
+for amount in AMOUNT_ORDER_DLQ:
+    group = dlq_scores.loc[dlq_scores["Amount"].eq(amount)]
+    r, p, n = correlation(group["prop_imm_dlq"], group["logk_dlq"])
+    concurrent_rows.append({"procedure": "DLQ", "amount": amount, "r": r, "p": p, "n": n})
+
+table3a = pd.DataFrame(concurrent_rows)
+table3a.assign(p=table3a["p"].map(format_p))
+```
+
+```{python}
+def reliability_matrix(scores, value, amount_order):
+    wide = scores.pivot(index="ID", columns="Amount", values=value)
+    return wide.reindex(columns=amount_order).corr()
+
+
+table3b_adj = reliability_matrix(adj_scores, "auc_adj_amt", AMOUNT_ORDER_ADJ)
+table3b_dlq = reliability_matrix(dlq_scores, "prop_imm_dlq", AMOUNT_ORDER_DLQ)
+table3c_adj = reliability_matrix(adj_scores, "logk_adj_amt", AMOUNT_ORDER_ADJ)
+table3c_dlq = reliability_matrix(dlq_scores, "logk_dlq", AMOUNT_ORDER_DLQ)
+
+display(pd.concat({"Adj-Amt AuC": table3b_adj, "DLQ immediate-choice proportion": table3b_dlq}))
+display(pd.concat({"Adj-Amt log(k)": table3c_adj, "DLQ log(k)": table3c_dlq}))
+```
+
+## Individual discounting patterns (Table 4)
+
+Patterns are classified separately for the $90 and $240 conditions, then combined within each procedure. "Inconsistent" means that a participant received different classifications for the two amounts.
+
+```{python}
+def classify_adj_group(group):
+    correlation_value = group["RSV"].corr(np.log(group["Delay"]))
+    correlation_value = 0.0 if pd.isna(correlation_value) else correlation_value
+    mean_value = group["RSV"].mean()
+    if correlation_value < 0 or np.isclose(mean_value, adj_amt["RSV"].min()):
+        return "Typical"
+    if correlation_value > 0:
+        return "Atypical"
+    if np.isclose(mean_value, adj_amt["RSV"].max()):
+        return "Always immediate"
+    return "Typical"
+
+
+def classify_dlq_group(group):
+    # Pattern classification uses each item's original k, as in the article.
+    correlation_value = group["Choice"].corr(np.log(group["k_raw"]))
+    correlation_value = 0.0 if pd.isna(correlation_value) else correlation_value
+    mean_choice = group["Choice"].mean()
+    if correlation_value > 0 or np.isclose(mean_choice, 0):
+        return "Typical"
+    if correlation_value < 0:
+        return "Atypical"
+    if np.isclose(mean_choice, 1):
+        return "Always immediate"
+    return "Unclassified"
+
+
+adj_amount_patterns = (
+    adj_amt.loc[adj_amt["Amount"].isin(COMMON_AMOUNTS)]
+    .groupby(["ID", "Amount"], sort=False)
+    .apply(classify_adj_group, include_groups=False)
+    .rename("amount_pattern")
+    .reset_index()
+)
+dlq_amount_patterns = (
+    dlq.loc[dlq["Amount"].isin(COMMON_AMOUNTS)]
+    .groupby(["ID", "Amount"], sort=False)
+    .apply(classify_dlq_group, include_groups=False)
+    .rename("amount_pattern")
+    .reset_index()
+)
+
+adj_patterns = (
+    adj_amount_patterns.groupby("ID")["amount_pattern"]
+    .apply(collapse_patterns)
+    .rename("Adj-Amt")
+)
+dlq_patterns = (
+    dlq_amount_patterns.groupby("ID")["amount_pattern"]
+    .apply(collapse_patterns)
+    .rename("DLQ")
+)
+patterns = pd.concat([adj_patterns, dlq_patterns], axis=1)
+
+table4 = pd.crosstab(patterns["Adj-Amt"], patterns["DLQ"]).reindex(
+    index=PATTERN_ORDER, columns=PATTERN_ORDER, fill_value=0
+)
+table4
+```
+
+```{python}
+expected = np.outer(table4.sum(axis=1), table4.sum(axis=0)) / table4.to_numpy().sum()
+# The article's test counts matching Typical and Always-immediate patterns.
+# Atypical and Inconsistent classifications are not counted as matches.
+observed_same = table4.loc["Typical", "Typical"] + table4.loc[
+    "Always immediate", "Always immediate"
+]
+expected_same = expected[0, 0] + expected[1, 1]
+published_chi_square = (observed_same - expected_same) ** 2 / expected_same
+published_p = chi2.sf(published_chi_square, df=1)
+
+pd.Series(
+    {
+        "same pattern, observed": observed_same,
+        "same pattern, expected": expected_same,
+        "same-pattern proportion": observed_same / len(patterns),
+        "chi-square": published_chi_square,
+        "df": 1,
+        "p": format_p(published_p),
+    },
+    name="published consistency test",
+)
+```
+
+## Reproduction checks
+
+These assertions fail if future code or data changes no longer reproduce the article within rounding tolerance.
+
+```{python}
+published_table2 = {
+    ("$90", "AuC / immediate-choice proportion"): 0.735,
+    ("$90", "log(k)"): 0.728,
+    ("$240", "AuC / immediate-choice proportion"): 0.777,
+    ("$240", "log(k)"): 0.773,
+}
+for row in table2.itertuples(index=False):
+    np.testing.assert_allclose(row.r, published_table2[(row.amount, row.measure)], atol=0.0006)
+
+published_table4 = np.array(
+    [
+        [255, 1, 1, 12],
+        [5, 56, 0, 10],
+        [5, 2, 0, 1],
+        [62, 8, 0, 13],
+    ]
+)
+np.testing.assert_array_equal(table4.to_numpy(), published_table4)
+np.testing.assert_allclose(published_chi_square, 42.7, atol=0.1)
+np.testing.assert_allclose(observed_same / len(patterns), 0.722, atol=0.0005)
+
+print("All primary results reproduce the published values within rounding tolerance.")
+```
+
+## Computational environment
+
+```{python}
+pd.Series(
+    {
+        "Python": platform.python_version(),
+        "pandas": pd.__version__,
+        "NumPy": np.__version__,
+        "SciPy": scipy.__version__,
+        "Matplotlib": plt.matplotlib.__version__,
+        "random seed": RNG_SEED,
+    }
+)
+```

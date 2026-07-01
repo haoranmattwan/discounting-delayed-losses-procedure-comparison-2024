@@ -1,63 +1,79 @@
-# Validating Measurement Procedures for Intertemporal Choice
+# Delayed Monetary Losses: Procedure and Measure Validation
 
-This repository contains the full analysis and replication code for the peer-reviewed publication:
+[![DOI](https://img.shields.io/badge/DOI-10.1016%2Fj.beproc.2024.105101-blue)](https://doi.org/10.1016/j.beproc.2024.105101)
+[![OSF](https://img.shields.io/badge/OSF-emb2q-2a6fbb)](https://osf.io/emb2q/)
+[![License: MIT](https://img.shields.io/badge/code%20license-MIT-green.svg)](LICENSE)
 
-> Wan, H., Green, L., & Myerson, J. (2024). Delayed monetary losses: Do different procedures and measures assess the same construct?. *Behavioural Processes, 222*, 105101. https://doi.orgorg/10.1016/j.beproc.2024.105101
+Open data and reproducible R and Python analyses for:
 
----
+> Wan, H., Green, L., & Myerson, J. (2024). Delayed monetary losses: Do different procedures and discounting measures assess the same construct? *Behavioural Processes, 222*, 105101. <https://doi.org/10.1016/j.beproc.2024.105101>
 
-## Project Objective
+## Research question
 
-This project provides a methodological validation of two procedures used to measure human decision-making: the **Adjusting-Amount (Adj-Amt) task** and the **Delayed Losses Questionnaire (DLQ)**. The central research question is whether these two instruments assess the same underlying construct.
+Do the Adjusting-Amount (Adj-Amt) procedure and the 27-item Delayed Losses Questionnaire (DLQ) measure the same delayed-loss discounting construct?
 
-The analysis evaluates the **convergent validity**, **concurrent validity**, and **internal reliability** of both procedures. This work is critical for researchers aiming to select appropriate measurement tools that balance efficiency and psychometric robustness, a common challenge in large-scale quantitative studies.
+The study analyzed 431 online participants and compared two scoring approaches for each procedure:
 
-The data are publicly available on the Open Science Framework at <https://osf.io/emb2q/>.
+- atheoretical measures: area under the curve (Adj-Amt) and immediate-choice proportion (DLQ);
+- theoretically derived measures: log-transformed *k* estimates based on a simple hyperbola.
 
----
+Across the two common delayed amounts ($90 and $240), scores from the procedures were strongly correlated (all *r* > .72). The analyses also showed strong concurrent validity and alternate-forms reliability. Most participants (72.2%) displayed the same typical or always-immediate response pattern across procedures.
 
-## Methodological Approach
+## Repository structure
 
-The analysis employs a multi-step psychometric validation workflow to compare the two measurement procedures for delayed losses:
+| Path | Purpose |
+| --- | --- |
+| [`Analysis/analysis_R.qmd`](Analysis/analysis_R.qmd) | Executable R/Quarto analysis with published-value checks |
+| [`Analysis/analysis_R.html`](Analysis/analysis_R.html) | Rendered R report |
+| [`Analysis/analysis_Py.ipynb`](Analysis/analysis_Py.ipynb) | Executable Python/Jupyter analysis |
+| [`Analysis/analysis_Py.qmd`](Analysis/analysis_Py.qmd) | Readable Quarto source for the Python notebook |
+| [`Analysis/analysis_Py.html`](Analysis/analysis_Py.html) | Rendered Python source report |
+| [`data/Data_AdjAmt_DLQ.csv`](data/Data_AdjAmt_DLQ.csv) | Anonymized analysis dataset |
+| [`data/README.md`](data/README.md) | Data dictionary, provenance, and integrity information |
+| [`Presentation/ABAI 2024/`](Presentation/ABAI%202024/) | Conference poster |
+| [`Figure/`](Figure/) | Archived publication figures |
 
-* **Individual-Level Parameter Estimation**: Custom functions were used to process raw trial data from each participant and derive key discounting metrics. This included an atheoretical measure (Area under the Curve) and a theoretical parameter (the hyperbolic discounting rate, *k*), which was estimated via non-linear least squares.
+The R and Python workflows independently implement the same scientific decisions. Both cover the analyses that directly support the article's central measurement conclusion: Figure 1 and Tables 2-4. They do not claim to reproduce every secondary demographic or amount-effect model in the publication.
 
-* **Psychometric Evaluation**: A comprehensive suite of correlational analyses was conducted to formally assess the measurement properties of the instruments, including **alternate-forms reliability** (between different monetary amounts within a procedure), **concurrent validity** (between the atheoretical and theoretical measures), and **convergent validity** (the primary analysis, correlating scores between the two procedures).
+## Reproduce the analysis
 
-* **Analysis of Response Pattern Consistency**: To assess behavioral consistency, participants were qualitatively classified based on their choice patterns (e.g., "Typical," "Always Immediate"). A Chi-Squared test of independence was then used to determine if individuals exhibited consistent response styles across both measurement tools.
+Clone the repository and run commands from its root directory.
 
-* **Group-Level Model Fitting**: As an initial data quality check, non-linear (hyperboloid) and logistic models were fit to aggregate data to verify that the results replicated established patterns in the literature, providing a baseline for the individual-level analyses.
+### R
 
----
+Requirements: R 4.1 or later and [Quarto](https://quarto.org/).
 
-## Repository Contents
+```bash
+quarto render Analysis/analysis_R.qmd
+```
 
-| File / Folder | Description |
-| :--- | :--- |
-| **`/Analysis/`** | Contains the primary analysis scripts replicating the findings. |
-| `analysis.qmd` | A **Quarto** document containing the complete, end-to-end analysis in **R**. |
-| `analysis.ipynb` | A **Jupyter Notebook** containing a full replication of the analysis in **Python**. |
-| **`/Presentation/`** | Contains the poster used to present the findings of this research at the 50th ABAI convention. |
-| **`/Figure/`** | Contains figures generated by the analysis scripts, matching those in the publication. |
+The R workflow uses base R and `knitr`. The included `renv.lock` records the small rendering environment; `renv::restore()` is optional.
 
----
+### Python
 
-## Reproducibility & Environment
+Requirements: Python 3.11 or later, Quarto, and the packages in `requirements.txt`.
 
-To execute these analyses, you will need the appropriate software environment and the raw data from the OSF repository.
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements.txt
+quarto render Analysis/analysis_Py.ipynb --execute
+```
 
-### R Environment (`analysis.qmd`)
+The checked-in Python HTML is a source report because Python execution was not available in the repository-review environment. Execute the notebook locally to populate results. The R report was executed end to end and contains machine-checkable comparisons with the published values.
 
-* **Key Packages**: `tidyverse`, `minpack.lm`, `betareg`, `multcomp`, `gmodels`, `here`
-* **Installation**:
-    ```R
-    install.packages(c("tidyverse", "minpack.lm", "betareg", "multcomp", "gmodels", "here"))
-    ```
+## Open-science practices
 
-### Python Environment (`analysis.ipynb`)
+- The analysis dataset is included in a nonproprietary CSV format and is also archived on [OSF](https://osf.io/emb2q/).
+- Data validation checks verify sample size, trial counts, amount conditions, delays, and binary choice coding before analysis.
+- Reproduction checks stop execution if the primary correlations, response-pattern table, or reported consistency statistic diverge from the article beyond rounding tolerance.
+- Random seeds and computational environments are reported in the rendered analyses.
+- The original article is open access under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
-* **Key Packages**: `pandas`, `numpy`, `scipy`, `statsmodels`, `seaborn`, `pingouin`
-* **Installation**:
-    ```bash
-    pip install pandas numpy scipy statsmodels seaborn pingouin
-    ```
+## Citation
+
+Please cite the article above when using the data, measures, or analysis. Machine-readable citation metadata are provided in [`CITATION.cff`](CITATION.cff).
+
+## Licenses
+
+The analysis code and repository documentation are released under the [MIT License](LICENSE). The article and data may have separate terms; consult the DOI and OSF records before redistribution.

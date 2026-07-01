@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "Please cite the associated article when using this repository."
+title: "Delayed Monetary Losses: Procedure and Measure Validation"
+type: software
+authors:
+  - family-names: Wan
+    given-names: Haoran
+  - family-names: Green
+    given-names: Leonard
+  - family-names: Myerson
+    given-names: Joel
+repository-code: "https://github.com/haoranmattwan/discounting-delayed-losses-procedure-comparison-2024"
+license: MIT
+preferred-citation:
+  type: article
+  title: "Delayed monetary losses: Do different procedures and discounting measures assess the same construct?"
+  authors:
+    - family-names: Wan
+      given-names: Haoran
+    - family-names: Green
+      given-names: Leonard
+    - family-names: Myerson
+      given-names: Joel
+  journal: Behavioural Processes
+  volume: 222
+  article-number: "105101"
+  year: 2024
+  doi: "10.1016/j.beproc.2024.105101"
+  url: "https://doi.org/10.1016/j.beproc.2024.105101"
