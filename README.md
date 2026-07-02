@@ -33,8 +33,6 @@ Across the two common delayed amounts ($90 and $240), scores from the procedures
 | [`Presentation/ABAI 2024/`](Presentation/ABAI%202024/) | Conference poster |
 | [`Figure/`](Figure/) | Archived publication figures |
 
-The R and Python workflows independently implement the same scientific decisions. Both cover the analyses that directly support the article's central measurement conclusion: Figure 1 and Tables 2-4. They do not claim to reproduce every secondary demographic or amount-effect model in the publication.
-
 ## Reproduce the analysis
 
 Clone the repository and run commands from its root directory.
